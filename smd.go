@@ -593,7 +593,6 @@ func parseBracketSpan(content string, after string) (*ASTNode, string, error) {
 }
 
 func extractInlineAttributes(s string) (Attributes, string, bool) {
-	s = strings.TrimSpace(s)
 	if !strings.HasPrefix(s, "{") {
 		return nil, s, false
 	}
@@ -605,7 +604,7 @@ func extractInlineAttributes(s string) (Attributes, string, bool) {
 	if err != nil {
 		return nil, s, false
 	}
-	return attrs, strings.TrimSpace(rest), true
+	return attrs, rest, true
 }
 
 func takeTextChunk(s string) (string, string) {
@@ -972,7 +971,7 @@ func extractBatchDocument(src string) string {
 		case hasCommentPrefix(trimmed, "REM"):
 			out = append(out, strings.TrimLeft(trimmed[3:], " \t"))
 		case strings.HasPrefix(trimmed, ":::"):
-			out = append(out, strings.TrimLeft(trimmed[3:], " \t"))
+			out = append(out, trimmed)
 		case strings.HasPrefix(trimmed, "::"):
 			out = append(out, strings.TrimLeft(trimmed[2:], " \t"))
 		}

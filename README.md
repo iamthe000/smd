@@ -16,6 +16,12 @@ SMD は、Markdown の読みやすさと LaTeX の論文向け機能を両立す
 go run ./cmd/smd-demo
 ```
 
+`.smd` ファイルを HTML に変換するには、次のように実行します。
+
+```bash
+go run ./cmd/smd-demo -input README.smd
+```
+
 Windows のコマンドプロンプトでは、次でもデモを実行できます。
 
 ```cmd

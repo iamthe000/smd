@@ -10,28 +10,16 @@ SMD は、Markdown の読みやすさと LaTeX の論文向け機能を両立す
 
 ## 動かし方
 
-リポジトリのルートで次を実行します。
+`.smd` ファイルを HTML に変換するには、リポジトリのルートで次のように実行します。
 
 ```bash
-go run ./cmd/smd-demo
+go run smd.go README.smd
 ```
 
-`.smd` ファイルを HTML に変換するには、次のように実行します。
+または、出力先の HTML ファイルを明示することもできます。
 
 ```bash
-go run ./cmd/smd-demo -input README.smd
-```
-
-Windows のコマンドプロンプトでは、次でもデモを実行できます。
-
-```cmd
-README.cmd
-```
-
-`.cmd` ファイルをそのまま HTML にしたい場合は、コメント行を原稿として扱って次のように変換します。
-
-```bash
-go run ./cmd/smd-demo -input README.cmd
+go run smd.go README.smd output.html
 ```
 
 生成された `README.html` をブラウザで開き、印刷から PDF に保存します。
@@ -135,7 +123,7 @@ func main() {
 ```
 
 - `CompileDocument` は A4 印刷用 CSS 付きの完全な HTML 文書を返します。
-- `CompileFile` は `.cmd` / `.bat` ならコメント行を原稿として抽出してから変換します。
+- `CompileFile` は `.smd` ファイルを直接読み込んで変換します。
 - `Compile` は HTML 断片だけが必要な場合に使います。
 - `Parse` は SMD の AST が必要な場合に使います。
 

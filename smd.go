@@ -1,4 +1,4 @@
-package smd
+package main
 
 import (
 	"encoding/json"
@@ -888,19 +888,13 @@ func Compile(src string) (string, *ASTNode, error) {
 	return html, ast, nil
 }
 
-// CompileFile compiles a plain SMD file or a Windows batch file that embeds
-// SMD prose in comment lines.
+// CompileFile compiles a plain SMD file.
 func CompileFile(path, title string) (string, *ASTNode, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", nil, err
 	}
-	src := string(data)
-	switch strings.ToLower(filepath.Ext(path)) {
-	case ".cmd", ".bat":
-		src = extractBatchDocument(src)
-	}
-	return CompileDocument(src, title)
+	return CompileDocument(string(data), title)
 }
 
 // CompileDocument wraps compiled SMD in a standalone, print-friendly HTML page.
@@ -963,35 +957,6 @@ func extractDefinitions(src string) (string, []*ASTNode, error) {
 	return strings.Join(body, "\n"), nodes, nil
 }
 
-func extractBatchDocument(src string) string {
-	var out []string
-	for _, line := range splitLines(src) {
-		trimmed := strings.TrimLeft(line, " \t")
-		switch {
-		case hasCommentPrefix(trimmed, "REM"):
-			out = append(out, strings.TrimLeft(trimmed[3:], " \t"))
-		case strings.HasPrefix(trimmed, ":::"):
-			out = append(out, trimmed)
-		case strings.HasPrefix(trimmed, "::"):
-			out = append(out, strings.TrimLeft(trimmed[2:], " \t"))
-		}
-	}
-	return strings.Join(out, "\n")
-}
-
-func hasCommentPrefix(line, prefix string) bool {
-	if strings.HasPrefix(line, "@") {
-		line = strings.TrimLeft(line[1:], " \t")
-	}
-	if len(line) < len(prefix) || !strings.EqualFold(line[:len(prefix)], prefix) {
-		return false
-	}
-	if len(line) == len(prefix) {
-		return true
-	}
-	next := line[len(prefix)]
-	return unicode.IsSpace(rune(next))
-}
 
 func analyzeDocument(document *ASTNode) {
 	footnotes := map[string]*ASTNode{}
@@ -1182,4 +1147,35 @@ func renderBibliography(b *strings.Builder, document *ASTNode) {
 		b.WriteString(`</li>`)
 	}
 	b.WriteString(`</ol></section>`)
+}
+
+func main() {
+	if len(os.Args) < 2 {
+		fmt.Println("Usage: go run smd.go <file_name.smd> [output_file.html]")
+		os.Exit(1)
+	}
+
+	inputFile := os.Args[1]
+	title := filepath.Base(inputFile)
+
+	page, _, err := CompileFile(inputFile, title)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	var outputFile string
+	if len(os.Args) >= 3 {
+		outputFile = os.Args[2]
+	} else {
+		ext := filepath.Ext(inputFile)
+		outputFile = filepath.Join(filepath.Dir(inputFile), strings.TrimSuffix(filepath.Base(inputFile), ext)+".html")
+	}
+
+	if err := os.WriteFile(outputFile, []byte(page), 0o644); err != nil {
+		fmt.Fprintf(os.Stderr, "Error writing file: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Generated: %s\n", outputFile)
 }

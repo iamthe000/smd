@@ -1,0 +1,20 @@
+# SMD を HTML / PDF にする
+
+このファイルは SMD の原稿です。
+
+## 変換方法
+
+`go run ./cmd/smd-demo -input README.smd`
+
+生成された `README.html` をブラウザで開き、印刷から PDF に保存します。
+
+## 書き方
+
+SMD（Structured Markdown Dialect）は、Markdown の読みやすさと LaTeX の論文向け機能を両立するための文書形式です。
+
+# 序論
+
+都市表象については [@yamada2024] を参照[^note-urban]。
+
+[^note-urban]: 山田の議論は都市と読者の関係を扱う。
+[@yamada2024]: 山田太郎『都市と文学』、2024年。

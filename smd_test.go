@@ -198,3 +198,73 @@ echo running
 		t.Fatalf("batch commands should not be rendered: %s", page)
 	}
 }
+
+func TestSpacePreservationAroundInlineAttributes(t *testing.T) {
+	ast, err := Parse(`A [span]{.accent} and [link](https://example.test){target=_blank} is here.`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := ast.Children[0]
+	if len(p.Children) != 5 {
+		t.Fatalf("expected 5 child nodes, got %d: %#v", len(p.Children), p.Children)
+	}
+	// Check the text nodes to ensure leading and trailing spaces are preserved
+	if p.Children[0].Value != "A " {
+		t.Errorf("expected 'A ', got %q", p.Children[0].Value)
+	}
+	if p.Children[2].Value != " and " {
+		t.Errorf("expected ' and ', got %q", p.Children[2].Value)
+	}
+	if p.Children[4].Value != " is here." {
+		t.Errorf("expected ' is here.', got %q", p.Children[4].Value)
+	}
+
+	html, err := RenderHTML(ast)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := `<p>A <span class="accent">span</span> and <a href="https://example.test" target="_blank">link</a> is here.</p>`
+	if html != expected {
+		t.Errorf("expected HTML %q, got %q", expected, html)
+	}
+}
+
+func TestCompileFileFromCmdDirectives(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "paper.cmd")
+	src := `@echo off
+setlocal
+
+REM # Title
+REM ::: toc
+REM :::
+
+:: ::: alert
+:: Attention!
+:: :::
+
+::: info
+REM Info message!
+:::
+`
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	page, _, err := CompileFile(path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Verify that the table-of-contents nav and the nested custom directives are properly compiled in HTML
+	if !strings.Contains(page, `<nav class="table-of-contents"`) {
+		t.Errorf("missing TOC in output: %s", page)
+	}
+	if !strings.Contains(page, `data-directive="alert"`) {
+		t.Errorf("missing alert directive in output: %s", page)
+	}
+	if !strings.Contains(page, `data-directive="info"`) {
+		t.Errorf("missing info directive in output: %s", page)
+	}
+	if !strings.Contains(page, `Info message!`) {
+		t.Errorf("missing directive content in output: %s", page)
+	}
+}

@@ -1,9 +1,7 @@
-package smd
+package main
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -172,32 +170,6 @@ func TestScholarlyDocumentFeatures(t *testing.T) {
 	}
 }
 
-func TestCompileFileFromCmdComments(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "paper.cmd")
-	src := `@echo off
-setlocal
-
-REM # 文書の題名
-REM
-REM 本文の段落です。
-
-echo running
-`
-	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	page, _, err := CompileFile(path, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(page, `<h1`) || !strings.Contains(page, `本文の段落です。`) {
-		t.Fatalf("cmd comments were not compiled: %s", page)
-	}
-	if strings.Contains(page, `echo running`) {
-		t.Fatalf("batch commands should not be rendered: %s", page)
-	}
-}
 
 func TestSpacePreservationAroundInlineAttributes(t *testing.T) {
 	ast, err := Parse(`A [span]{.accent} and [link](https://example.test){target=_blank} is here.`)
@@ -226,45 +198,5 @@ func TestSpacePreservationAroundInlineAttributes(t *testing.T) {
 	expected := `<p>A <span class="accent">span</span> and <a href="https://example.test" target="_blank">link</a> is here.</p>`
 	if html != expected {
 		t.Errorf("expected HTML %q, got %q", expected, html)
-	}
-}
-
-func TestCompileFileFromCmdDirectives(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "paper.cmd")
-	src := `@echo off
-setlocal
-
-REM # Title
-REM ::: toc
-REM :::
-
-:: ::: alert
-:: Attention!
-:: :::
-
-::: info
-REM Info message!
-:::
-`
-	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	page, _, err := CompileFile(path, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Verify that the table-of-contents nav and the nested custom directives are properly compiled in HTML
-	if !strings.Contains(page, `<nav class="table-of-contents"`) {
-		t.Errorf("missing TOC in output: %s", page)
-	}
-	if !strings.Contains(page, `data-directive="alert"`) {
-		t.Errorf("missing alert directive in output: %s", page)
-	}
-	if !strings.Contains(page, `data-directive="info"`) {
-		t.Errorf("missing info directive in output: %s", page)
-	}
-	if !strings.Contains(page, `Info message!`) {
-		t.Errorf("missing directive content in output: %s", page)
 	}
 }

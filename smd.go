@@ -6,6 +6,7 @@ import (
 	"html"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -294,13 +295,20 @@ func addClassFromAttr(b *strings.Builder, attrs Attributes) {
 	}
 }
 
-func filteredAttrs(attrs Attributes, exclude string) Attributes {
+func filteredAttrs(attrs Attributes, excludes ...string) Attributes {
 	if len(attrs) == 0 {
 		return nil
 	}
 	out := make(Attributes, len(attrs))
 	for k, v := range attrs {
-		if k != exclude {
+		excluded := false
+		for _, ex := range excludes {
+			if k == ex {
+				excluded = true
+				break
+			}
+		}
+		if !excluded {
 			out[k] = v
 		}
 	}
@@ -325,8 +333,6 @@ func (p *parser) parseBlocks(indent int) ([]*ASTNode, error) {
 			break
 		}
 		trimmed := strings.TrimSpace(line)
-		// Container parsers consume their own closing delimiter. Leave it for
-		// the caller instead of interpreting it as another container opener.
 		if trimmed == ":::" || strings.HasPrefix(trimmed, "</@") {
 			break
 		}
@@ -432,8 +438,6 @@ func (p *parser) parseDirective(indent int) (*ASTNode, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Directive contents may be indented for readability, but indentation is
-	// optional (as in the canonical alert example).
 	children, err := p.parseBlocks(indent)
 	if err != nil {
 		return nil, err
@@ -540,7 +544,6 @@ func parseInlines(s string) ([]*ASTNode, error) {
 		}
 		chunk, rest := takeTextChunk(s)
 		if chunk == "" && rest == s {
-			// A malformed construct is literal text, not a reason to loop forever.
 			chunk, rest = string(s[0]), s[1:]
 		}
 		out = append(out, &ASTNode{Type: "Text", Value: chunk})
@@ -800,12 +803,18 @@ func extractTrailingAttributes(s string) (string, Attributes) {
 	if !strings.HasSuffix(s, "}") {
 		return s, nil
 	}
-	start := strings.LastIndex(s, "{")
+	if isEscaped(s, len(s)-1) {
+		return s, nil
+	}
+	start := indexLastUnescapedChar(s, '{')
 	if start < 0 {
 		return s, nil
 	}
-	// `]{...}` belongs to an inline span or link, even when it happens to be
-	// the final construct in a heading or paragraph.
+	for i := start + 1; i < len(s)-1; i++ {
+		if s[i] == '}' && !isEscaped(s, i) {
+			return s, nil
+		}
+	}
 	if start > 0 && s[start-1] == ']' {
 		return s, nil
 	}
@@ -819,6 +828,23 @@ func extractTrailingAttributes(s string) (string, Attributes) {
 		return content, attrs
 	}
 	return content, attrs
+}
+
+func isEscaped(s string, pos int) bool {
+	slashes := 0
+	for i := pos - 1; i >= 0 && s[i] == '\\'; i-- {
+		slashes++
+	}
+	return slashes%2 == 1
+}
+
+func indexLastUnescapedChar(s string, target byte) int {
+	for i := len(s) - 1; i >= 0; i-- {
+		if s[i] == target && !isEscaped(s, i) {
+			return i
+		}
+	}
+	return -1
 }
 
 func mergeAttributes(node *ASTNode, attrs Attributes) {
@@ -864,13 +890,7 @@ func sortedKeys(m map[string]any) []string {
 	for k := range m {
 		keys = append(keys, k)
 	}
-	for i := 1; i < len(keys); i++ {
-		j := i
-		for j > 0 && keys[j-1] > keys[j] {
-			keys[j-1], keys[j] = keys[j], keys[j-1]
-			j--
-		}
-	}
+	slices.Sort(keys)
 	return keys
 }
 
@@ -888,7 +908,6 @@ func Compile(src string) (string, *ASTNode, error) {
 	return html, ast, nil
 }
 
-// CompileFile compiles a plain SMD file.
 func CompileFile(path, title string) (string, *ASTNode, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -897,7 +916,6 @@ func CompileFile(path, title string) (string, *ASTNode, error) {
 	return CompileDocument(string(data), title)
 }
 
-// CompileDocument wraps compiled SMD in a standalone, print-friendly HTML page.
 func CompileDocument(src, title string) (string, *ASTNode, error) {
 	body, ast, err := Compile(src)
 	if err != nil {
@@ -924,7 +942,7 @@ figure { margin: 2rem auto; } figure img { display: block; max-width: 100%; heig
 `
 
 func extractDefinitions(src string) (string, []*ASTNode, error) {
-	var body, definitions []string
+	var body []string
 	var nodes []*ASTNode
 	for _, line := range splitLines(src) {
 		trimmed := strings.TrimSpace(line)
@@ -951,9 +969,7 @@ func extractDefinitions(src string) (string, []*ASTNode, error) {
 			return "", nil, err
 		}
 		nodes = append(nodes, &ASTNode{Type: kind, Attributes: Attributes{"key": key}, Children: children})
-		definitions = append(definitions, key)
 	}
-	_ = definitions
 	return strings.Join(body, "\n"), nodes, nil
 }
 
@@ -1083,9 +1099,7 @@ func plainText(node *ASTNode) string {
 }
 
 func renderFigure(b *strings.Builder, node *ASTNode) {
-	attrs := filteredAttrs(node.Attributes, "src")
-	attrs = filteredAttrs(attrs, "alt")
-	attrs = filteredAttrs(attrs, "number")
+	attrs := filteredAttrs(node.Attributes, "src", "alt", "number")
 	b.WriteString("<figure")
 	writeHTMLAttrs(b, attrs)
 	b.WriteString(">")

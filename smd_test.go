@@ -200,3 +200,49 @@ func TestSpacePreservationAroundInlineAttributes(t *testing.T) {
 		t.Errorf("expected HTML %q, got %q", expected, html)
 	}
 }
+
+func TestFilteredAttrsVariadic(t *testing.T) {
+	attrs := Attributes{
+		"src":    "image.png",
+		"alt":    "An image",
+		"number": 1,
+		"class":  "hero",
+		"id":     "fig-1",
+	}
+	filtered := filteredAttrs(attrs, "src", "alt", "number")
+	if len(filtered) != 2 {
+		t.Fatalf("expected 2 attributes left, got %d", len(filtered))
+	}
+	if _, ok := filtered["src"]; ok {
+		t.Errorf("'src' should have been excluded")
+	}
+	if _, ok := filtered["alt"]; ok {
+		t.Errorf("'alt' should have been excluded")
+	}
+	if _, ok := filtered["number"]; ok {
+		t.Errorf("'number' should have been excluded")
+	}
+	if filtered["class"] != "hero" || filtered["id"] != "fig-1" {
+		t.Errorf("unexpected remaining attributes: %#v", filtered)
+	}
+}
+
+func TestExtractTrailingAttributesEdgeCases(t *testing.T) {
+	content, attrs := extractTrailingAttributes("Some text {with braces} inside {#my-id}")
+	if content != "Some text {with braces} inside" {
+		t.Errorf("unexpected content: %q", content)
+	}
+	if attrs == nil || attrs["id"] != "my-id" {
+		t.Errorf("unexpected attrs: %#v", attrs)
+	}
+
+	content2, attrs2 := extractTrailingAttributes("Text {foo} bar}")
+	if content2 != "Text {foo} bar}" || attrs2 != nil {
+		t.Errorf("expected no trailing attribute extraction for broken block, got content %q and attrs %#v", content2, attrs2)
+	}
+
+	content3, attrs3 := extractTrailingAttributes("Text ending with escaped brace \\}")
+	if content3 != "Text ending with escaped brace \\}" || attrs3 != nil {
+		t.Errorf("expected no trailing attribute extraction for escaped brace, got content %q and attrs %#v", content3, attrs3)
+	}
+}

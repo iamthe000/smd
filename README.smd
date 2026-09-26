@@ -1,20 +1,45 @@
-# SMD を HTML / PDF にする
+# SMD
 
-このファイルは SMD の原稿です。
+SMDは、Markdownを基にした文書形式です。見出し、脚注、文献引用、図版、LaTeX数式を記述し、印刷用のHTMLに変換できます。
 
-## 変換方法
+## 使い方
 
-`go run ./cmd/smd-demo -input README.smd`
+原稿をHTMLに変換します。
 
-生成された `README.html` をブラウザで開き、印刷から PDF に保存します。
+`go run smd.go input.smd output.html` と実行します。
 
-## 書き方
+出力先を省略すると、入力ファイルと同じ場所に拡張子を`.html`に変えたファイルを作成します。生成したHTMLはブラウザで開いてPDFに保存できます。
 
-SMD（Structured Markdown Dialect）は、Markdown の読みやすさと LaTeX の論文向け機能を両立するための文書形式です。
+用紙サイズは `--page-size B5` のように指定します。`210mmx297mm` のような幅と高さも使えます。
 
-# 序論
+ChromiumまたはGoogle Chromeがあれば、`--pdf --page-size B5 input.smd output.pdf` でPDFを作成できます。PDFではヘッドレスブラウザがMathJax、CSS、画像を処理します。
 
-都市表象については [@yamada2024] を参照[^note-urban]。
+## 記法
 
-[^note-urban]: 山田の議論は都市と読者の関係を扱う。
-[@yamada2024]: 山田太郎『都市と文学』、2024年。
+`#`から始まる行は見出しになります。`::: toc`で目次を挿入できます。
+
+脚注は本文に `[^note]`、定義に `[^note]: 注釈` と書きます。文献は `[@key]` と定義行 `[@key]: 書誌情報` を使います。
+
+図版は次のように記述します。
+
+`::: figure id=fig-example src="example.jpg" alt="図の説明"` の次の行にキャプションを書き、`:::`で閉じます。
+
+本文から `[@fig-example]` で図を参照できます。
+
+インライン数式は `$E=mc^2$` または `\(E=mc^2\)`、独立した数式は `$$...$$` または `\[...\]` で囲みます。数式はMathJax 3で表示します。
+
+## 実装
+
+`Parse`が原稿をASTに変換し、`analyzeDocument`が見出し・脚注・文献・図版の番号と参照先を設定します。`RenderHTML`がASTをHTMLに変換します。
+
+主なAPIは次のとおりです。
+
+- `Compile`：HTML断片を返す
+- `CompileDocument`：CSSとMathJaxを含むHTML文書を返す
+- `CompileDocumentWithPageSize`：用紙サイズを指定してHTML文書を返す
+- `CompileFile`：ファイルを読み込んで変換する
+- `Parse`：ASTを返す
+
+数式表示にはCDN上のMathJaxを使うため、生成HTMLを開くときにインターネット接続が必要です。
+
+詳細な記法の確認には `FORTEST.smd` を使います。

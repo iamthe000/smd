@@ -170,6 +170,73 @@ func TestScholarlyDocumentFeatures(t *testing.T) {
 	}
 }
 
+func TestMathSyntax(t *testing.T) {
+	src := `本文中の式 $E=mc^2$ と \(a+b\) を扱う。
+
+$$
+\int_0^1 x^2\,dx = \frac{1}{3}
+$$`
+	ast, err := Parse(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ast.Children) != 2 {
+		t.Fatalf("expected paragraph and display math, got %#v", ast.Children)
+	}
+	paragraph := ast.Children[0]
+	if paragraph.Type != "Paragraph" || len(paragraph.Children) != 5 {
+		t.Fatalf("unexpected inline math AST: %#v", paragraph)
+	}
+	if paragraph.Children[1].Type != "InlineMath" || paragraph.Children[1].Value != "E=mc^2" {
+		t.Fatalf("unexpected dollar math node: %#v", paragraph.Children[1])
+	}
+	if paragraph.Children[3].Type != "InlineMath" || paragraph.Children[3].Value != "a+b" {
+		t.Fatalf("unexpected parenthesized math node: %#v", paragraph.Children[3])
+	}
+	if ast.Children[1].Type != "DisplayMath" || !strings.Contains(ast.Children[1].Value, `\frac{1}{3}`) {
+		t.Fatalf("unexpected display math node: %#v", ast.Children[1])
+	}
+	rendered, err := RenderHTML(ast)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rendered, `class="math-inline">\(E=mc^2\)</span>`) ||
+		!strings.Contains(rendered, `class="math-display">\[`) {
+		t.Fatalf("math was not rendered with MathJax delimiters: %s", rendered)
+	}
+}
+
+func TestUnterminatedMathRemainsText(t *testing.T) {
+	ast, err := Parse("価格は $100 です。")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ast.Children[0].Children[0].Value; got != "価格は $100 です。" {
+		t.Fatalf("unexpected handling of unmatched dollar: %q", got)
+	}
+}
+
+func TestPageSize(t *testing.T) {
+	page, _, err := CompileDocumentWithPageSize("# Test", "Test", "210mmx297mm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(page, "@page { size: 210mm 297mm;") {
+		t.Fatalf("custom page size was not applied: %s", page)
+	}
+
+	page, _, err = CompileDocumentWithPageSize("# Test", "Test", "B5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(page, "@page { size: B5;") {
+		t.Fatalf("standard page size was not applied: %s", page)
+	}
+
+	if _, _, err := CompileDocumentWithPageSize("# Test", "Test", "210mm; color:red"); err == nil {
+		t.Fatal("expected invalid page size to fail")
+	}
+}
 
 func TestSpacePreservationAroundInlineAttributes(t *testing.T) {
 	ast, err := Parse(`A [span]{.accent} and [link](https://example.test){target=_blank} is here.`)

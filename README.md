@@ -1,136 +1,87 @@
 # SMD (Structured Markdown Dialect)
 
-SMD は、Markdown の読みやすさと LaTeX の論文向け機能を両立するための文書形式です。
-原稿から、見出し番号・目次・脚注・引用・参考文献・図版番号を含む、印刷用 CSS 付きの HTML を生成します。
+SMDは、Markdownを基にした文書形式です。見出し、脚注、文献引用、図版、LaTeX数式を記述し、印刷用のHTMLに変換できます。
 
 ## 必要な環境
 
-- Go 1.24 以降
-- PDF を作る場合は、生成した HTML を開けるブラウザ
+- Go 1.24以降
+- PDFを作る場合は、生成したHTMLを開くブラウザ
 
-## 動かし方
-
-`.smd` ファイルを HTML に変換するには、リポジトリのルートで次のように実行します。
+## 使い方
 
 ```bash
-go run smd.go README.smd
+go run smd.go input.smd output.html
 ```
 
-または、出力先の HTML ファイルを明示することもできます。
+出力先を省略すると、入力ファイルと同じ場所に拡張子を`.html`に変えたファイルを作成します。生成したHTMLはブラウザで開き、印刷画面からPDFに保存できます。
+
+用紙サイズは`--page-size`で指定できます。標準サイズのほか、`幅x高さ`の形式で指定できます。
 
 ```bash
-go run smd.go README.smd output.html
+go run smd.go --page-size B5 input.smd output.html
+go run smd.go --page-size 210mmx297mm input.smd output.html
 ```
 
-生成された `README.html` をブラウザで開き、印刷から PDF に保存します。
+利用できる標準サイズは`A3`、`A4`、`A5`、`B4`、`B5`、`Letter`、`Legal`です。指定したサイズは生成HTMLの`@page`に反映されます。
 
-テストを実行するには次を使います。
+ChromiumまたはGoogle Chromeがインストールされていれば、HTMLを経由してPDFまで一度に作成できます。
+
+```bash
+go run smd.go --pdf --page-size B5 input.smd output.pdf
+```
+
+出力先を省略した場合は、入力ファイルと同じ場所に同名のPDFを作成します。PDF出力ではヘッドレスブラウザがMathJax、CSS、画像を処理します。
+
+記法の確認には、リポジトリにあるテスト用原稿を使えます。
+
+```bash
+go run smd.go FORTEST.smd test.html
+```
+
+テストと静的チェックは次のコマンドで実行します。
 
 ```bash
 go test ./...
 go vet ./...
 ```
 
-## 原稿の書き方
+## 記法
+
+`#`から始まる行は見出しになります。`::: toc`で目次を挿入できます。見出しには節番号とアンカーが付きます。
+
+脚注は本文に `[^note]`、定義に `[^note]: 注釈` と書きます。文献は `[@key]` と定義行 `[@key]: 書誌情報` を使います。
+
+図版は次のように記述します。
 
 ```smd
-::: toc
+::: figure id=fig-example src="example.jpg" alt="図の説明"
+図のキャプション
 :::
-
-# 序論
-
-都市表象については [@yamada2024] を参照[^note-urban]。
-
-::: figure id=fig-city src="city.jpg" alt="都市の景観"
-都市の景観
-:::
-
-図[@fig-city]が示すように、都市空間は重要である。
-
-[^note-urban]: 山田の議論は都市と読者の関係を扱う。
-[@yamada2024]: 山田太郎『都市と文学』、2024年。
 ```
 
-### 見出しと目次
+本文から `[@fig-example]` で図を参照できます。図版は自動で番号付けされます。
 
-```smd
-::: toc
-:::
+インライン数式は `$E=mc^2$` または `\(E=mc^2\)`、独立した数式は `$$...$$` または `\[...\]` で囲みます。数式はLaTeXとしてMathJax 3で表示します。
 
-# 第一章
-## 第一節
-```
+## 実装
 
-- `::: toc` は番号付きの目次を出力します。
-- `#`、`##`、`###` の見出しには自動で節番号とアンカーが付きます。
+`Parse`が原稿をASTに変換し、`analyzeDocument`が見出し・脚注・文献・図版の番号と参照先を設定します。`RenderHTML`がASTをHTMLに変換します。
 
-### 脚注
+主なAPIは次のとおりです。
 
-本文では `[^キー]`、原稿内の任意の場所に定義を書きます。
+- `Compile`：HTML断片を返す
+- `CompileDocument`：CSSとMathJaxを含むHTML文書を返す
+- `CompileDocumentWithPageSize`：用紙サイズを指定してHTML文書を返す
+- `CompileFile`：ファイルを読み込んで変換する
+- `Parse`：ASTを返す
 
-```smd
-本文の注釈[^note-1]。
+PDF出力はCLIの`--pdf`で行います。ブラウザの実行ファイルを指定する場合は、環境変数`SMD_BROWSER`を使います。
 
-[^note-1]: 注釈の本文です。
-```
+数式表示にはCDN上のMathJaxを使うため、生成HTMLを開くときにインターネット接続が必要です。
 
-### 文献引用
+## ファイル
 
-本文では `[@キー]`、原稿内の任意の場所に文献情報を書きます。
-
-```smd
-先行研究を参照する [@tanaka2025]。
-
-[@tanaka2025]: 田中一郎『日本近代史研究』、2025年。
-```
-
-### 図版と相互参照
-
-```smd
-::: figure id=fig-map src="map.png" alt="研究対象地域の地図"
-研究対象地域
-:::
-
-図[@fig-map]を参照してください。
-```
-
-- `id` は図を参照するための固有名です。
-- `src` は画像ファイルのパスです。
-- 図は自動で番号付けされます。
-- `[@fig-map]` は「図 1」のようなリンクになります。
-
-## Go から使う
-
-```go
-package main
-
-import (
-    "os"
-
-    "smd"
-)
-
-func main() {
-    source := "# タイトル\n\n本文です。"
-    page, _, err := smd.CompileDocument(source, "論文タイトル")
-    if err != nil {
-        panic(err)
-    }
-    if err := os.WriteFile("paper.html", []byte(page), 0644); err != nil {
-        panic(err)
-    }
-}
-```
-
-- `CompileDocument` は A4 印刷用 CSS 付きの完全な HTML 文書を返します。
-- `CompileFile` は `.smd` ファイルを直接読み込んで変換します。
-- `Compile` は HTML 断片だけが必要な場合に使います。
-- `Parse` は SMD の AST が必要な場合に使います。
-
-## PDF にする
-
-1. `CompileDocument` の結果を `paper.html` として保存します。
-2. ブラウザで `paper.html` を開きます。
-3. 印刷画面から「PDF に保存」を選びます。
-
-この方式なら LaTeX の導入なしで、日本語フォントをブラウザ側の設定で選択できます。
+- `smd.go`：パーサ、AST、HTMLレンダラ、CLI
+- `smd_test.go`：Goのテスト
+- `FORTEST.smd`：記法を確認する原稿
+- `examples/city.jpg`：図版サンプル。CC0の画像

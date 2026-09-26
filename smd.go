@@ -2,10 +2,14 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"html"
+	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -145,6 +149,14 @@ func renderHTML(b *strings.Builder, n *ASTNode) error {
 		b.WriteString("<code>")
 		b.WriteString(html.EscapeString(n.Value))
 		b.WriteString("</code>")
+	case "InlineMath":
+		b.WriteString(`<span class="math-inline">\(`)
+		b.WriteString(html.EscapeString(n.Value))
+		b.WriteString(`\)</span>`)
+	case "DisplayMath":
+		b.WriteString(`<div class="math-display">\[`)
+		b.WriteString(html.EscapeString(n.Value))
+		b.WriteString(`\]</div>`)
 	case "Link":
 		b.WriteString("<a")
 		writeHTMLAttrs(b, n.Attributes)
@@ -376,6 +388,9 @@ func (p *parser) parseNextBlock(indent int) (*ASTNode, error) {
 	if strings.HasPrefix(trimmed, "<@") {
 		return p.parseComponent(indent)
 	}
+	if isDisplayMathStart(trimmed) {
+		return p.parseDisplayMath(indent)
+	}
 	if isHeadingLine(trimmed) {
 		p.i++
 		level := countPrefix(trimmed, '#')
@@ -388,6 +403,33 @@ func (p *parser) parseNextBlock(indent int) (*ASTNode, error) {
 		return &ASTNode{Type: "Heading", Level: level, Attributes: attrs, Children: inlines}, nil
 	}
 	return p.parseParagraph(indent)
+}
+
+func isDisplayMathStart(line string) bool {
+	return line == "$$" || line == `\[`
+}
+
+func (p *parser) parseDisplayMath(indent int) (*ASTNode, error) {
+	start := strings.TrimSpace(p.lines[p.i])
+	end := "$$"
+	if start == `\[` {
+		end = `\]`
+	}
+	p.i++
+	var lines []string
+	for p.i < len(p.lines) {
+		line := p.lines[p.i]
+		if strings.TrimSpace(line) == end {
+			p.i++
+			return &ASTNode{Type: "DisplayMath", Value: strings.Join(lines, "\n")}, nil
+		}
+		if countIndent(line) < indent {
+			break
+		}
+		lines = append(lines, strings.TrimSpace(line))
+		p.i++
+	}
+	return nil, fmt.Errorf("unterminated display math block")
 }
 
 func (p *parser) parseParagraph(indent int) (*ASTNode, error) {
@@ -491,6 +533,18 @@ func parseInlines(s string) ([]*ASTNode, error) {
 	var out []*ASTNode
 	for len(s) > 0 {
 		switch {
+		case strings.HasPrefix(s, `\(`):
+			if inner, rest, ok := takeMathDelimited(s[2:], `\)`); ok {
+				out = append(out, &ASTNode{Type: "InlineMath", Value: inner})
+				s = rest
+				continue
+			}
+		case s[0] == '$' && !strings.HasPrefix(s, "$$"):
+			if inner, rest, ok := takeMathDelimited(s[1:], "$"); ok {
+				out = append(out, &ASTNode{Type: "InlineMath", Value: inner})
+				s = rest
+				continue
+			}
 		case strings.HasPrefix(s, "**"):
 			inner, rest, ok := takeDelimited(s[2:], "**")
 			if ok {
@@ -563,6 +617,17 @@ func parseInlines(s string) ([]*ASTNode, error) {
 	return compact, nil
 }
 
+func takeMathDelimited(s, delim string) (string, string, bool) {
+	idx := strings.Index(s, delim)
+	if delim == "$" {
+		idx = indexUnescaped(s, delim)
+	}
+	if idx < 0 {
+		return "", s, false
+	}
+	return s[:idx], s[idx+len(delim):], true
+}
+
 func parseBracketSpan(content string, after string) (*ASTNode, string, error) {
 	if strings.HasPrefix(after, "(") {
 		url, tail, ok := takeParen(after)
@@ -613,11 +678,14 @@ func extractInlineAttributes(s string) (Attributes, string, bool) {
 func takeTextChunk(s string) (string, string) {
 	i := 0
 	for i < len(s) {
+		if strings.HasPrefix(s[i:], `\(`) {
+			break
+		}
 		if s[i] == '\\' && i+1 < len(s) {
 			i += 2
 			continue
 		}
-		if strings.HasPrefix(s[i:], "**") || s[i] == '_' || s[i] == '[' || s[i] == '{' {
+		if strings.HasPrefix(s[i:], "**") || s[i] == '_' || s[i] == '[' || s[i] == '{' || s[i] == '$' {
 			break
 		}
 		if s[i] == '`' {
@@ -917,15 +985,47 @@ func CompileFile(path, title string) (string, *ASTNode, error) {
 }
 
 func CompileDocument(src, title string) (string, *ASTNode, error) {
+	return CompileDocumentWithPageSize(src, title, "A4")
+}
+
+// CompileDocumentWithPageSize compiles a document and sets the CSS page size
+// used when the generated HTML is printed to PDF.
+func CompileDocumentWithPageSize(src, title, pageSize string) (string, *ASTNode, error) {
 	body, ast, err := Compile(src)
+	if err != nil {
+		return "", nil, err
+	}
+	pageSize, err = normalizePageSize(pageSize)
 	if err != nil {
 		return "", nil, err
 	}
 	if title == "" {
 		title = "SMD document"
 	}
-	page := "<!doctype html><html lang=\"ja\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>" + html.EscapeString(title) + "</title><style>" + scholarlyCSS + "</style></head><body><main class=\"smd-paper\">" + body + "</main></body></html>"
+	css := strings.Replace(scholarlyCSS, "@page { size: A4;", "@page { size: "+pageSize+";", 1)
+	page := "<!doctype html><html lang=\"ja\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>" + html.EscapeString(title) + "</title><style>" + css + "</style><script>window.MathJax={tex:{packages:{'[+]':['ams']}}};</script><script async src=\"https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js\"></script></head><body><main class=\"smd-paper\">" + body + "</main></body></html>"
 	return page, ast, nil
+}
+
+var pageDimensionPattern = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+)?(?:mm|cm|in|pt|px)$`)
+
+func normalizePageSize(pageSize string) (string, error) {
+	pageSize = strings.TrimSpace(pageSize)
+	if pageSize == "" {
+		return "", fmt.Errorf("page size must not be empty")
+	}
+	standardSizes := map[string]string{
+		"A3": "A3", "A4": "A4", "A5": "A5",
+		"B4": "B4", "B5": "B5", "LETTER": "letter", "LEGAL": "legal",
+	}
+	if normalized, ok := standardSizes[strings.ToUpper(pageSize)]; ok {
+		return normalized, nil
+	}
+	parts := strings.Split(strings.ToLower(pageSize), "x")
+	if len(parts) != 2 || !pageDimensionPattern.MatchString(parts[0]) || !pageDimensionPattern.MatchString(parts[1]) {
+		return "", fmt.Errorf("unsupported page size %q; use A3, A4, A5, B4, B5, Letter, Legal, or WIDTHxHEIGHT such as 210mmx297mm", pageSize)
+	}
+	return parts[0] + " " + parts[1], nil
 }
 
 const scholarlyCSS = `
@@ -937,6 +1037,8 @@ h1, h2, h3 { line-height: 1.45; margin-top: 2.2em; }
 .table-of-contents { border: 1px solid #bbb; padding: 1rem 1.5rem; margin: 2rem 0; }
 .table-of-contents ol { padding-left: 1.4rem; }.toc-level-2 { margin-left: 1rem; }.toc-level-3 { margin-left: 2rem; }
 figure { margin: 2rem auto; } figure img { display: block; max-width: 100%; height: auto; margin: auto; } figcaption { margin-top: .6rem; text-align: center; }
+.math-display { overflow-x: auto; margin: 1.5rem 0; text-align: center; }
+.math-inline { white-space: nowrap; }
 .footnotes, .bibliography { border-top: 1px solid #999; margin-top: 3rem; padding-top: 1rem; font-size: .92em; }
 .citation, .footnote-ref a { text-decoration: none; } @media print { .smd-paper { max-width: none; margin: 0; } a { color: inherit; } }
 `
@@ -972,7 +1074,6 @@ func extractDefinitions(src string) (string, []*ASTNode, error) {
 	}
 	return strings.Join(body, "\n"), nodes, nil
 }
-
 
 func analyzeDocument(document *ASTNode) {
 	footnotes := map[string]*ASTNode{}
@@ -1164,32 +1265,107 @@ func renderBibliography(b *strings.Builder, document *ASTNode) {
 }
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Println("Usage: go run smd.go <file_name.smd> [output_file.html]")
+	pageSize := flag.String("page-size", "A4", "PDF page size: A3, A4, A5, B4, B5, Letter, Legal, or WIDTHxHEIGHT")
+	pdf := flag.Bool("pdf", false, "write a PDF instead of HTML; requires Chromium or Google Chrome")
+	flag.Parse()
+	if flag.NArg() < 1 {
+		fmt.Println("Usage: go run smd.go [--pdf] [--page-size A4] <file_name.smd> [output_file]")
 		os.Exit(1)
 	}
 
-	inputFile := os.Args[1]
+	inputFile := flag.Arg(0)
 	title := filepath.Base(inputFile)
 
-	page, _, err := CompileFile(inputFile, title)
+	data, err := os.ReadFile(inputFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	page, _, err := CompileDocumentWithPageSize(string(data), title, *pageSize)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
 	var outputFile string
-	if len(os.Args) >= 3 {
-		outputFile = os.Args[2]
+	if flag.NArg() >= 2 {
+		outputFile = flag.Arg(1)
 	} else {
 		ext := filepath.Ext(inputFile)
-		outputFile = filepath.Join(filepath.Dir(inputFile), strings.TrimSuffix(filepath.Base(inputFile), ext)+".html")
+		outputExt := ".html"
+		if *pdf {
+			outputExt = ".pdf"
+		}
+		outputFile = filepath.Join(filepath.Dir(inputFile), strings.TrimSuffix(filepath.Base(inputFile), ext)+outputExt)
 	}
 
-	if err := os.WriteFile(outputFile, []byte(page), 0o644); err != nil {
-		fmt.Fprintf(os.Stderr, "Error writing file: %v\n", err)
-		os.Exit(1)
+	if *pdf {
+		if err := writePDF(page, inputFile, outputFile); err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing PDF: %v\n", err)
+			os.Exit(1)
+		}
+	} else {
+		if err := os.WriteFile(outputFile, []byte(page), 0o644); err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing file: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	fmt.Printf("Generated: %s\n", outputFile)
+}
+
+func writePDF(page, inputFile, outputFile string) error {
+	browser, err := findPDFBrowser()
+	if err != nil {
+		return err
+	}
+	temp, err := os.CreateTemp(filepath.Dir(inputFile), ".smd-pdf-*.html")
+	if err != nil {
+		return err
+	}
+	tempPath := temp.Name()
+	defer os.Remove(tempPath)
+	if _, err := temp.WriteString(page); err != nil {
+		temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	absTempPath, err := filepath.Abs(tempPath)
+	if err != nil {
+		return err
+	}
+	pageURL := (&url.URL{Scheme: "file", Path: filepath.ToSlash(absTempPath)}).String()
+	absOutput, err := filepath.Abs(outputFile)
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(browser,
+		"--headless",
+		"--disable-gpu",
+		"--no-pdf-header-footer",
+		"--allow-file-access-from-files",
+		"--virtual-time-budget=10000",
+		"--print-to-pdf="+absOutput,
+		pageURL,
+	)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("%s failed: %w\n%s", browser, err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func findPDFBrowser() (string, error) {
+	candidates := []string{}
+	if configured := strings.TrimSpace(os.Getenv("SMD_BROWSER")); configured != "" {
+		candidates = append(candidates, configured)
+	}
+	candidates = append(candidates, "chromium", "chromium-browser", "google-chrome", "google-chrome-stable")
+	for _, candidate := range candidates {
+		if path, err := exec.LookPath(candidate); err == nil {
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf("Chromium or Google Chrome was not found; install one or set SMD_BROWSER")
 }

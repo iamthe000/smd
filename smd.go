@@ -127,6 +127,22 @@ func renderHTML(b *strings.Builder, n *ASTNode) error {
 			}
 		}
 		b.WriteString("</p>")
+	case "Table":
+		b.WriteString("<table")
+		writeHTMLAttrs(b, n.Attributes)
+		b.WriteString("><thead>")
+		if len(n.Children) > 0 {
+			if err := renderTableRow(b, n.Children[0], true); err != nil {
+				return err
+			}
+		}
+		b.WriteString("</thead><tbody>")
+		for _, row := range n.Children[1:] {
+			if err := renderTableRow(b, row, false); err != nil {
+				return err
+			}
+		}
+		b.WriteString("</tbody></table>")
 	case "Text":
 		b.WriteString(html.EscapeString(n.Value))
 	case "Bold":
@@ -252,6 +268,31 @@ func renderHTML(b *strings.Builder, n *ASTNode) error {
 			}
 		}
 	}
+	return nil
+}
+
+func renderTableRow(b *strings.Builder, row *ASTNode, header bool) error {
+	b.WriteString("<tr>")
+	for _, cell := range row.Children {
+		tag := "td"
+		if header {
+			tag = "th"
+		}
+		b.WriteString("<" + tag)
+		if align, ok := cell.Attributes["align"]; ok && align != "left" {
+			b.WriteString(` style="text-align:`)
+			b.WriteString(html.EscapeString(fmt.Sprint(align)))
+			b.WriteString(`"`)
+		}
+		b.WriteString(">")
+		for _, child := range cell.Children {
+			if err := renderHTML(b, child); err != nil {
+				return err
+			}
+		}
+		b.WriteString("</" + tag + ">")
+	}
+	b.WriteString("</tr>")
 	return nil
 }
 
@@ -391,6 +432,9 @@ func (p *parser) parseNextBlock(indent int) (*ASTNode, error) {
 	if isDisplayMathStart(trimmed) {
 		return p.parseDisplayMath(indent)
 	}
+	if p.isTableStart(indent) {
+		return p.parseTable(indent)
+	}
 	if isHeadingLine(trimmed) {
 		p.i++
 		level := countPrefix(trimmed, '#')
@@ -403,6 +447,105 @@ func (p *parser) parseNextBlock(indent int) (*ASTNode, error) {
 		return &ASTNode{Type: "Heading", Level: level, Attributes: attrs, Children: inlines}, nil
 	}
 	return p.parseParagraph(indent)
+}
+
+// Tables use the familiar pipe syntax. A separator row is required so that
+// ordinary prose containing a pipe is not accidentally turned into a table.
+func (p *parser) isTableStart(indent int) bool {
+	if p.i+1 >= len(p.lines) || countIndent(p.lines[p.i]) < indent {
+		return false
+	}
+	header, ok := splitTableRow(strings.TrimSpace(p.lines[p.i]))
+	separator, separatorOK := splitTableRow(strings.TrimSpace(p.lines[p.i+1]))
+	if !ok || !separatorOK || len(header) == 0 || len(header) != len(separator) {
+		return false
+	}
+	for _, cell := range separator {
+		cell = strings.TrimSpace(cell)
+		if len(cell) < 3 || !regexp.MustCompile(`^:?-{3,}:?$`).MatchString(cell) {
+			return false
+		}
+	}
+	return true
+}
+
+func (p *parser) parseTable(indent int) (*ASTNode, error) {
+	first, _ := splitTableRow(strings.TrimSpace(p.lines[p.i]))
+	separator, _ := splitTableRow(strings.TrimSpace(p.lines[p.i+1]))
+	columns := len(first)
+	alignments := make([]string, columns)
+	for i, cell := range separator {
+		cell = strings.TrimSpace(cell)
+		left, right := strings.HasPrefix(cell, ":"), strings.HasSuffix(cell, ":")
+		switch {
+		case left && right:
+			alignments[i] = "center"
+		case right:
+			alignments[i] = "right"
+		default:
+			alignments[i] = "left"
+		}
+	}
+	p.i += 2
+	rows := []*ASTNode{}
+	for rowIndex, values := range [][]string{first} {
+		row, err := tableRow(values, alignments, rowIndex == 0)
+		if err != nil {
+			return nil, err
+		}
+		rows = append(rows, row)
+	}
+	for p.i < len(p.lines) {
+		line := p.lines[p.i]
+		if strings.TrimSpace(line) == "" || countIndent(line) < indent {
+			break
+		}
+		values, ok := splitTableRow(strings.TrimSpace(line))
+		if !ok || len(values) != columns {
+			break
+		}
+		row, err := tableRow(values, alignments, false)
+		if err != nil {
+			return nil, err
+		}
+		rows = append(rows, row)
+		p.i++
+	}
+	return &ASTNode{Type: "Table", Children: rows}, nil
+}
+
+func splitTableRow(line string) ([]string, bool) {
+	if !strings.Contains(line, "|") {
+		return nil, false
+	}
+	if strings.HasPrefix(line, "|") {
+		line = line[1:]
+	}
+	if strings.HasSuffix(line, "|") && !isEscaped(line, len(line)-1) {
+		line = line[:len(line)-1]
+	}
+	var cells []string
+	start := 0
+	for i := 0; i < len(line); i++ {
+		if line[i] == '|' && !isEscaped(line, i) {
+			cells = append(cells, strings.TrimSpace(line[start:i]))
+			start = i + 1
+		}
+	}
+	cells = append(cells, strings.TrimSpace(line[start:]))
+	return cells, len(cells) > 0
+}
+
+func tableRow(values, alignments []string, header bool) (*ASTNode, error) {
+	row := &ASTNode{Type: "TableRow"}
+	for i, value := range values {
+		children, err := parseInlines(value)
+		if err != nil {
+			return nil, err
+		}
+		row.Children = append(row.Children, &ASTNode{Type: "TableCell", Attributes: Attributes{"align": alignments[i], "header": header}, Children: children})
+	}
+	return row, nil
 }
 
 func isDisplayMathStart(line string) bool {
@@ -446,7 +589,7 @@ func (p *parser) parseParagraph(indent int) (*ASTNode, error) {
 		}
 		trimmed := strings.TrimSpace(line)
 		if (strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}") && isBlockAttrLine(trimmed)) ||
-			strings.HasPrefix(trimmed, ":::") || strings.HasPrefix(trimmed, "<@") || isHeadingLine(trimmed) {
+			strings.HasPrefix(trimmed, ":::") || strings.HasPrefix(trimmed, "<@") || isHeadingLine(trimmed) || p.isTableStart(indent) {
 			break
 		}
 		buf = append(buf, strings.TrimSpace(line))
@@ -988,9 +1131,26 @@ func CompileDocument(src, title string) (string, *ASTNode, error) {
 	return CompileDocumentWithPageSize(src, title, "A4")
 }
 
+// DocumentOptions controls resources embedded in the generated HTML.
+// MathJaxLocalPath may be a filesystem path or a URL. With
+// DisableMathJaxCDN it is used directly; otherwise it is used as a fallback
+// when the default CDN script cannot be loaded.
+type DocumentOptions struct {
+	MathJaxLocalPath  string
+	DisableMathJaxCDN bool
+}
+
 // CompileDocumentWithPageSize compiles a document and sets the CSS page size
 // used when the generated HTML is printed to PDF.
 func CompileDocumentWithPageSize(src, title, pageSize string) (string, *ASTNode, error) {
+	return CompileDocumentWithPageSizeAndOptions(src, title, pageSize, DocumentOptions{})
+}
+
+func CompileDocumentWithOptions(src, title string, options DocumentOptions) (string, *ASTNode, error) {
+	return CompileDocumentWithPageSizeAndOptions(src, title, "A4", options)
+}
+
+func CompileDocumentWithPageSizeAndOptions(src, title, pageSize string, options DocumentOptions) (string, *ASTNode, error) {
 	body, ast, err := Compile(src)
 	if err != nil {
 		return "", nil, err
@@ -1003,8 +1163,45 @@ func CompileDocumentWithPageSize(src, title, pageSize string) (string, *ASTNode,
 		title = "SMD document"
 	}
 	css := strings.Replace(scholarlyCSS, "@page { size: A4;", "@page { size: "+pageSize+";", 1)
-	page := "<!doctype html><html lang=\"ja\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>" + html.EscapeString(title) + "</title><style>" + css + "</style><script>window.MathJax={tex:{packages:{'[+]':['ams']}}};</script><script async src=\"https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js\"></script></head><body><main class=\"smd-paper\">" + body + "</main></body></html>"
+	mathJax, err := mathJaxScripts(options)
+	if err != nil {
+		return "", nil, err
+	}
+	page := "<!doctype html><html lang=\"ja\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>" + html.EscapeString(title) + "</title><style>" + css + "</style>" + mathJax + "</head><body><main class=\"smd-paper\">" + body + "</main></body></html>"
 	return page, ast, nil
+}
+
+func mathJaxScripts(options DocumentOptions) (string, error) {
+	config := `<script>window.MathJax={tex:{packages:{'[+]':['ams']}}};</script>`
+	local := strings.TrimSpace(options.MathJaxLocalPath)
+	if local == "" {
+		if options.DisableMathJaxCDN {
+			return config, nil
+		}
+		return config + `<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>`, nil
+	}
+	localURL, err := mathJaxURL(local)
+	if err != nil {
+		return "", err
+	}
+	localAttr := html.EscapeString(localURL)
+	if options.DisableMathJaxCDN {
+		return config + `<script src="` + localAttr + `"></script>`, nil
+	}
+	localJS, _ := json.Marshal(localURL)
+	fallback := `(function(){var s=document.createElement('script');s.src=` + string(localJS) + `;document.head.appendChild(s)})()`
+	return config + `<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" onerror="` + html.EscapeString(fallback) + `"></script>`, nil
+}
+
+func mathJaxURL(path string) (string, error) {
+	if strings.Contains(path, "://") || strings.HasPrefix(path, "//") {
+		return path, nil
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve MathJax path: %w", err)
+	}
+	return (&url.URL{Scheme: "file", Path: filepath.ToSlash(abs)}).String(), nil
 }
 
 var pageDimensionPattern = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+)?(?:mm|cm|in|pt|px)$`)
@@ -1036,6 +1233,9 @@ h1, h2, h3 { line-height: 1.45; margin-top: 2.2em; }
 .heading-number { font-variant-numeric: tabular-nums; }
 .table-of-contents { border: 1px solid #bbb; padding: 1rem 1.5rem; margin: 2rem 0; }
 .table-of-contents ol { padding-left: 1.4rem; }.toc-level-2 { margin-left: 1rem; }.toc-level-3 { margin-left: 2rem; }
+table { border-collapse: collapse; width: 100%; margin: 1.5rem 0; }
+th, td { border: 1px solid #bbb; padding: .45rem .65rem; vertical-align: top; }
+th { background: #f3f3f3; }
 figure { margin: 2rem auto; } figure img { display: block; max-width: 100%; height: auto; margin: auto; } figcaption { margin-top: .6rem; text-align: center; }
 .math-display { overflow-x: auto; margin: 1.5rem 0; text-align: center; }
 .math-inline { white-space: nowrap; }
@@ -1267,9 +1467,10 @@ func renderBibliography(b *strings.Builder, document *ASTNode) {
 func main() {
 	pageSize := flag.String("page-size", "A4", "PDF page size: A3, A4, A5, B4, B5, Letter, Legal, or WIDTHxHEIGHT")
 	pdf := flag.Bool("pdf", false, "write a PDF instead of HTML; requires Chromium or Google Chrome")
+	mathJaxLocal := flag.String("mathjax-local", "", "use a local MathJax file or URL; also used as CDN fallback")
 	flag.Parse()
 	if flag.NArg() < 1 {
-		fmt.Println("Usage: go run smd.go [--pdf] [--page-size A4] <file_name.smd> [output_file]")
+		fmt.Println("Usage: go run smd.go [--pdf] [--page-size A4] [--mathjax-local PATH] <file_name.smd> [output_file]")
 		os.Exit(1)
 	}
 
@@ -1281,7 +1482,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	page, _, err := CompileDocumentWithPageSize(string(data), title, *pageSize)
+	page, _, err := CompileDocumentWithPageSizeAndOptions(string(data), title, *pageSize, DocumentOptions{MathJaxLocalPath: *mathJaxLocal, DisableMathJaxCDN: *mathJaxLocal != ""})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)

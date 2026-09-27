@@ -4,8 +4,8 @@ SMDは、Markdownを基にした文書形式です。見出し、脚注、文献
 
 ## 必要な環境
 
-- Go 1.24以降
-- PDFを作る場合は、生成したHTMLを開くブラウザ
+* Go 1.24以降
+* PDFを作る場合は、生成したHTMLを開くブラウザ
 
 ## 使い方
 
@@ -49,7 +49,7 @@ go vet ./...
 
 `#`から始まる行は見出しになります。`::: toc`で目次を挿入できます。見出しには節番号とアンカーが付きます。
 
-脚注は本文に `[^note]`、定義に `[^note]: 注釈` と書きます。文献は `[@key]` と定義行 `[@key]: 書誌情報` を使います。
+脚注は本文に `\[^note]`、定義に `\[^note]: 注釈` と書きます。文献は `\[@key]` と定義行 `\[@key]: 書誌情報` を使います。
 
 図版は次のように記述します。
 
@@ -59,9 +59,17 @@ go vet ./...
 :::
 ```
 
-本文から `[@fig-example]` で図を参照できます。図版は自動で番号付けされます。
+本文から `\[@fig-example]` で図を参照できます。図版は自動で番号付けされます。
 
-インライン数式は `$E=mc^2$` または `\(E=mc^2\)`、独立した数式は `$$...$$` または `\[...\]` で囲みます。数式はLaTeXとしてMathJax 3で表示します。
+インライン数式は `$E=mc^2$` または `\\(E=mc^2\\)`、独立した数式は `$$...$$` または `\\\[...\\]` で囲みます。数式はLaTeXとしてMathJax 3で表示します。
+
+テーブルは次のように書けます。区切り行の`:`で列の揃え方を指定できます。
+
+```smd
+| 名前 | 点数 |
+| :--- | ---: |
+| Alice | 100 |
+```
 
 ## 実装
 
@@ -69,19 +77,27 @@ go vet ./...
 
 主なAPIは次のとおりです。
 
-- `Compile`：HTML断片を返す
-- `CompileDocument`：CSSとMathJaxを含むHTML文書を返す
-- `CompileDocumentWithPageSize`：用紙サイズを指定してHTML文書を返す
-- `CompileFile`：ファイルを読み込んで変換する
-- `Parse`：ASTを返す
+* `Compile`：HTML断片を返す
+* `CompileDocument`：CSSとMathJaxを含むHTML文書を返す
+* `CompileDocumentWithPageSize`：用紙サイズを指定してHTML文書を返す
+* `CompileFile`：ファイルを読み込んで変換する
+* `Parse`：ASTを返す
 
-PDF出力はCLIの`--pdf`で行います。ブラウザの実行ファイルを指定する場合は、環境変数`SMD_BROWSER`を使います。
+PDF出力はCLIの`--pdf`で行います。ブラウザの実行ファイルを指定する場合は、環境変数`SMD\_BROWSER`を使います。
 
 数式表示にはCDN上のMathJaxを使うため、生成HTMLを開くときにインターネット接続が必要です。
+オフラインで生成する場合は、MathJaxの`tex-mml-chtml.js`を指定できます。
+
+```bash
+go run smd.go --mathjax-local /path/to/mathjax/es5/tex-mml-chtml.js input.smd output.html
+```
+
+APIでは`DocumentOptions{MathJaxLocalPath: "..."}`を使えます。`DisableMathJaxCDN: true`ならローカルのみ、`false`ならCDNの読み込みに失敗したときローカルへフォールバックします。
 
 ## ファイル
 
-- `smd.go`：パーサ、AST、HTMLレンダラ、CLI
-- `smd_test.go`：Goのテスト
-- `FORTEST.smd`：記法を確認する原稿
-- `examples/city.jpg`：図版サンプル。CC0の画像
+* `smd.go`：パーサ、AST、HTMLレンダラ、CLI
+* `smd\_test.go`：Goのテスト
+* `FORTEST.smd`：記法を確認する原稿
+* `examples/city.jpg`：図版サンプル。CC0の画像
+
